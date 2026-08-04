@@ -256,6 +256,11 @@
         localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
       }
 
+      // The host is audio-only, but we must advertise a video channel so the
+      // guest's camera has a slot to negotiate on. Without this the offer
+      // contains audio only and the guest's video is never sent (black screen).
+      try { pc.addTransceiver('video', { direction: 'recvonly' }); } catch (_) {}
+
       pc.onicecandidate = (e) => {
         if (e.candidate) {
           socket.emit('signal', { candidate: e.candidate });
@@ -265,6 +270,7 @@
       pc.ontrack = (e) => {
         // Guest sends camera video (+ their mic audio).
         els.remoteVideo.srcObject = e.streams[0];
+        els.remoteVideo.play().catch(() => {});
       };
 
       pc.onconnectionstatechange = () => {

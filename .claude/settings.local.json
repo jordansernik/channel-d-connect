@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git -c user.name=\"Channel D\" -c user.email=\"jordan@channeld.com\" commit -q -m \"Fix: host advertises recvonly video so guest camera actually streams\")",
+      "Bash(git push *)"
+    ]
+  }
+}
