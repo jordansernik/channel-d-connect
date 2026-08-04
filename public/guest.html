@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0d1117" />
+  <title>Channel D Connect</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: rgba(22, 27, 34, 0.85);
+      --border: rgba(255, 255, 255, 0.14);
+      --text: #e6edf3;
+      --muted: #9aa7b8;
+      --accent: #3b82f6;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg); color: var(--text);
+      position: fixed; inset: 0;
+    }
+
+    /* Fullscreen self-preview */
+    #localVideo {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover; background: #000;
+      transform: translateZ(0);
+    }
+    /* Mirror only when using the front camera */
+    body.front-camera #localVideo { transform: scaleX(-1); }
+
+    /* Top status pill */
+    .topbar {
+      position: absolute; top: 0; left: 0; right: 0;
+      padding: calc(env(safe-area-inset-top, 0px) + 14px) 16px 14px;
+      display: flex; justify-content: center;
+      pointer-events: none; z-index: 5;
+    }
+    .status {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border); border-radius: 999px;
+      padding: 8px 16px; font-size: 13px; font-weight: 500;
+    }
+    .status .light { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+    .status.waiting .light { background: var(--amber); animation: pulse 1.4s infinite; }
+    .status.connected .light { background: var(--green); }
+    .status.disconnected .light { background: var(--red); }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+    /* Bottom control bar */
+    .controls {
+      position: absolute; left: 0; right: 0;
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+      display: flex; justify-content: center; align-items: center; gap: 22px;
+      z-index: 5;
+    }
+    .ctrl {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text); cursor: pointer;
+      transition: transform .1s, background .15s;
+    }
+    .ctrl:active { transform: scale(0.92); }
+    .ctrl svg { width: 26px; height: 26px; }
+    .ctrl.muted { background: var(--red); border-color: var(--red); }
+    .ctrl-label {
+      position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
+      font-size: 11px; color: var(--muted); white-space: nowrap;
+    }
+    .ctrl-wrap { position: relative; }
+
+    /* Permission / error overlay */
+    .overlay {
+      position: absolute; inset: 0; z-index: 20;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 18px; text-align: center; padding: 32px;
+      background: linear-gradient(180deg, #0d1117 0%, #111827 100%);
+    }
+    .overlay .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 17px; margin-bottom: 4px; }
+    .overlay .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+    .overlay h1 { font-size: 22px; font-weight: 700; }
+    .overlay p { color: var(--muted); font-size: 15px; line-height: 1.55; max-width: 320px; }
+    .overlay button {
+      font: inherit; font-weight: 600; cursor: pointer;
+      background: var(--accent); color: #fff; border: none;
+      border-radius: 12px; padding: 15px 28px; font-size: 16px; margin-top: 6px;
+    }
+    .overlay .cam-icon { color: var(--accent); margin-bottom: 6px; }
+    .hidden { display: none !important; }
+
+    /* Small remote-audio indicator (host talking) */
+    .host-audio {
+      position: absolute; top: calc(env(safe-area-inset-top, 0px) + 60px);
+      left: 50%; transform: translateX(-50%);
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 999px; padding: 6px 14px; font-size: 12px; color: var(--muted);
+      display: none; align-items: center; gap: 8px; z-index: 5;
+    }
+    body.is-connected .host-audio { display: flex; }
+  </style>
+</head>
+<body>
+  <!-- Self camera preview (fullscreen) -->
+  <video id="localVideo" autoplay playsinline muted></video>
+  <!-- Host audio (no video shown) -->
+  <audio id="remoteAudio" autoplay playsinline></audio>
+
+  <div class="topbar">
+    <div class="status" id="status">
+      <span class="light"></span>
+      <span id="statusText">Connecting…</span>
+    </div>
+  </div>
+
+  <div class="host-audio" id="hostAudio">
+    <span>🔊</span> Support agent connected
+  </div>
+
+  <div class="controls hidden" id="controls">
+    <div class="ctrl-wrap">
+      <button class="ctrl" id="muteBtn" aria-label="Mute microphone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="micIcon">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>
+        </svg>
+      </button>
+      <span class="ctrl-label">Mute</span>
+    </div>
+    <div class="ctrl-wrap">
+      <button class="ctrl" id="flipBtn" aria-label="Flip camera">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12a10 10 0 0 1 17-7.3L23 8"/><path d="M22 12a10 10 0 0 1-17 7.3L1 16"/>
+          <path d="M23 4v4h-4"/><path d="M1 20v-4h4"/>
+        </svg>
+      </button>
+      <span class="ctrl-label">Flip</span>
+    </div>
+  </div>
+
+  <!-- Start / permission overlay (iOS needs a user gesture) -->
+  <div class="overlay" id="overlay">
+    <div class="brand"><span class="dot"></span> Channel D Connect</div>
+    <div class="cam-icon">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+        <circle cx="12" cy="13" r="4"/>
+      </svg>
+    </div>
+    <h1 id="overlayTitle">Start Video Support</h1>
+    <p id="overlayText">Tap below to share your camera and microphone with our support team. We'll be able to see your camera and talk to you.</p>
+    <button id="startBtn">Enable Camera &amp; Mic</button>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    // ICE config is fetched from the server so TURN credentials stay server-side.
+    // Falls back to STUN-only if the request fails.
+    const DEFAULT_ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+    let rtcConfig = DEFAULT_ICE;
+    let iceConfigLoaded = false;
+
+    async function ensureIceConfig() {
+      if (iceConfigLoaded) return;
+      try {
+        const res = await fetch('/api/ice-servers');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.iceServers) && data.iceServers.length) {
+            rtcConfig = data;
+          }
+        }
+      } catch (_) { /* keep STUN-only fallback */ }
+      iceConfigLoaded = true;
+    }
+
+    // roomId from /join/:roomId
+    const parts = location.pathname.split('/').filter(Boolean);
+    const roomId = parts[parts.length - 1];
+
+    const els = {
+      status: document.getElementById('status'),
+      statusText: document.getElementById('statusText'),
+      localVideo: document.getElementById('localVideo'),
+      remoteAudio: document.getElementById('remoteAudio'),
+      controls: document.getElementById('controls'),
+      muteBtn: document.getElementById('muteBtn'),
+      micIcon: document.getElementById('micIcon'),
+      flipBtn: document.getElementById('flipBtn'),
+      overlay: document.getElementById('overlay'),
+      overlayTitle: document.getElementById('overlayTitle'),
+      overlayText: document.getElementById('overlayText'),
+      startBtn: document.getElementById('startBtn'),
+      hostAudio: document.getElementById('hostAudio'),
+    };
+
+    let socket = null;
+    let pc = null;
+    let localStream = null;
+    let facingMode = 'environment'; // default to rear camera
+    let joined = false;
+
+    function setStatus(state, text) {
+      els.status.className = 'status ' + state;
+      els.statusText.textContent = text;
+    }
+
+    function showError(title, text) {
+      els.overlay.classList.remove('hidden');
+      els.overlayTitle.textContent = title;
+      els.overlayText.textContent = text;
+      els.startBtn.textContent = 'Try Again';
+      els.startBtn.disabled = false;
+    }
+
+    // --- Media ---
+    async function getCameraStream(mode) {
+      const constraints = {
+        video: { facingMode: mode ? { ideal: mode } : undefined },
+        audio: true,
+      };
+      return navigator.mediaDevices.getUserMedia(constraints);
+    }
+
+    async function startMedia() {
+      // Rear camera + mic by default.
+      localStream = await getCameraStream('environment');
+      facingMode = 'environment';
+      els.localVideo.srcObject = localStream;
+      document.body.classList.remove('front-camera');
+      // iOS: the muted+playsinline video autoplays after the gesture.
+      try { await els.localVideo.play(); } catch (_) {}
+    }
+
+    // --- Peer connection (guest is the answerer) ---
+    function createPeerConnection() {
+      closePeerConnection();
+      pc = new RTCPeerConnection(rtcConfig);
+
+      // Add our camera + mic tracks so the host receives them.
+      localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) socket.emit('signal', { candidate: e.candidate });
+      };
+
+      pc.ontrack = (e) => {
+        // Host sends audio only.
+        els.remoteAudio.srcObject = e.streams[0];
+        els.remoteAudio.play().catch(() => {});
+      };
+
+      pc.onconnectionstatechange = () => {
+        const s = pc.connectionState;
+        if (s === 'connected') {
+          document.body.classList.add('is-connected');
+          setStatus('connected', 'Connected');
+        } else if (s === 'disconnected' || s === 'failed') {
+          document.body.classList.remove('is-connected');
+          setStatus('disconnected', 'Reconnecting…');
+        }
+      };
+
+      return pc;
+    }
+
+    function closePeerConnection() {
+      if (pc) {
+        pc.onicecandidate = null;
+        pc.ontrack = null;
+        pc.onconnectionstatechange = null;
+        try { pc.close(); } catch (_) {}
+        pc = null;
+      }
+    }
+
+    // --- Signaling ---
+    async function handleSignal(payload) {
+      await ensureIceConfig();
+      if (!pc) createPeerConnection();
+      try {
+        if (payload.description) {
+          await pc.setRemoteDescription(payload.description);
+          if (payload.description.type === 'offer') {
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit('signal', { description: pc.localDescription });
+          }
+        } else if (payload.candidate) {
+          try { await pc.addIceCandidate(payload.candidate); }
+          catch (err) { console.warn('addIceCandidate', err); }
+        }
+      } catch (err) {
+        console.error('handleSignal failed', err);
+      }
+    }
+
+    function connectSocket() {
+      socket = io();
+
+      socket.on('connect', () => {
+        socket.emit('join-room', roomId, (res) => {
+          if (!res || !res.ok) {
+            showError('Session Not Found', 'This support link is no longer active. Please ask your support agent for a new link.');
+            return;
+          }
+          joined = true;
+          if (res.hostConnected) setStatus('waiting', 'Waiting for agent…');
+          else setStatus('waiting', 'Waiting for agent…');
+        });
+      });
+
+      socket.on('signal', handleSignal);
+
+      // Host reload / reconnect — rebuild the connection when the new offer arrives.
+      socket.on('peer-rejoined', () => {
+        setStatus('waiting', 'Agent reconnecting…');
+      });
+
+      socket.on('peer-disconnected', ({ role }) => {
+        if (role === 'host') {
+          document.body.classList.remove('is-connected');
+          setStatus('disconnected', 'Agent disconnected');
+          closePeerConnection();
+        }
+      });
+
+      socket.on('disconnect', () => {
+        setStatus('disconnected', 'Reconnecting…');
+      });
+    }
+
+    // --- Flip camera ---
+    async function flipCamera() {
+      els.flipBtn.disabled = true;
+      const next = facingMode === 'environment' ? 'user' : 'environment';
+      try {
+        const newStream = await getCameraStream(next);
+        const newVideoTrack = newStream.getVideoTracks()[0];
+
+        // Replace the outgoing video track without renegotiating.
+        if (pc) {
+          const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+          if (sender) await sender.replaceTrack(newVideoTrack);
+        }
+
+        // Swap the video track in our local stream + preview, keep existing audio.
+        const oldVideoTrack = localStream.getVideoTracks()[0];
+        if (oldVideoTrack) { localStream.removeTrack(oldVideoTrack); oldVideoTrack.stop(); }
+        localStream.addTrack(newVideoTrack);
+        // Drop the extra audio track from the new stream (we keep the original mic).
+        newStream.getAudioTracks().forEach((t) => t.stop());
+
+        els.localVideo.srcObject = localStream;
+        facingMode = next;
+        document.body.classList.toggle('front-camera', next === 'user');
+      } catch (err) {
+        console.error('flipCamera failed', err);
+      } finally {
+        els.flipBtn.disabled = false;
+      }
+    }
+
+    // --- Mute ---
+    function toggleMute() {
+      const track = localStream && localStream.getAudioTracks()[0];
+      if (!track) return;
+      track.enabled = !track.enabled;
+      const muted = !track.enabled;
+      els.muteBtn.classList.toggle('muted', muted);
+      // Swap to a muted-mic icon.
+      els.micIcon.innerHTML = muted
+        ? '<line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/>'
+        : '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>';
+      if (socket) socket.emit('peer-state', { muted });
+    }
+
+    // --- Start button (the required iOS user gesture) ---
+    els.startBtn.addEventListener('click', async () => {
+      els.startBtn.disabled = true;
+      els.startBtn.textContent = 'Starting…';
+      try {
+        await startMedia();
+      } catch (err) {
+        console.error('getUserMedia failed', err);
+        const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
+        showError(
+          denied ? 'Camera Access Needed' : 'Camera Unavailable',
+          denied
+            ? 'Please allow camera and microphone access in your browser, then tap Try Again. On iPhone you may need to check Settings → Safari.'
+            : 'We could not access your camera. Make sure no other app is using it, then tap Try Again.'
+        );
+        return;
+      }
+
+      els.overlay.classList.add('hidden');
+      els.controls.classList.remove('hidden');
+      setStatus('waiting', 'Waiting for agent…');
+      await ensureIceConfig();
+      connectSocket();
+    });
+
+    els.flipBtn.addEventListener('click', flipCamera);
+    els.muteBtn.addEventListener('click', toggleMute);
+
+    // Basic validity check on load.
+    if (!roomId || roomId === 'join') {
+      showError('Invalid Link', 'This support link is missing a session code. Please ask your agent for a new link.');
+      els.startBtn.disabled = true;
+    }
+  })();
+  </script>
+</body>
+</html>

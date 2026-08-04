@@ -1,0 +1,20 @@
+# Render Blueprint — deploys Channel D Connect as an HTTPS web service.
+# In Render: New + → Blueprint → point it at this repo, and it reads this file.
+services:
+  - type: web
+    name: channel-d-connect
+    runtime: node
+    plan: free            # bump to "starter" ($7/mo) to avoid cold starts
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # TURN relay credentials — set these in the Render dashboard (kept out of
+      # the repo). Leave unset to run STUN-only.
+      - key: TURN_URLS
+        sync: false
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_CREDENTIAL
+        sync: false

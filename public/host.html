@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Channel D Connect — Host</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel-2: #1c2230;
+      --border: #2a3140;
+      --text: #e6edf3;
+      --muted: #8b98a9;
+      --accent: #3b82f6;
+      --accent-hover: #2f6fe0;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 16px; }
+    .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+    .status {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; color: var(--muted);
+      padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px;
+      background: var(--panel-2);
+    }
+    .status .light { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); transition: background .2s; }
+    .status.waiting .light { background: var(--amber); animation: pulse 1.4s infinite; }
+    .status.connected .light { background: var(--green); }
+    .status.disconnected .light { background: var(--red); }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+    main { flex: 1; display: flex; gap: 20px; padding: 20px; min-height: 0; }
+    @media (max-width: 900px) { main { flex-direction: column; } }
+
+    .video-stage {
+      flex: 1; position: relative;
+      background: #000; border: 1px solid var(--border); border-radius: 14px;
+      overflow: hidden; display: flex; align-items: center; justify-content: center;
+      min-height: 320px;
+    }
+    .video-stage video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+    .video-stage .placeholder {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 14px; color: var(--muted);
+      text-align: center; padding: 24px;
+    }
+    .video-stage .placeholder svg { opacity: .5; }
+    .badge-live {
+      position: absolute; top: 14px; left: 14px;
+      display: none; align-items: center; gap: 6px;
+      background: rgba(0,0,0,.55); border: 1px solid var(--border);
+      padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    }
+    .badge-live .rec { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+    body.is-connected .badge-live { display: flex; }
+    body.is-connected .placeholder { display: none; }
+
+    .sidebar {
+      width: 340px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px;
+    }
+    @media (max-width: 900px) { .sidebar { width: 100%; } }
+
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 14px; padding: 18px;
+    }
+    .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 12px; font-weight: 600; }
+
+    button {
+      font: inherit; cursor: pointer; border: none; border-radius: 10px;
+      padding: 12px 16px; font-weight: 600; transition: background .15s, opacity .15s;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #fff; width: 100%; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: #232b3a; }
+    .btn-danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
+
+    .link-row {
+      display: flex; gap: 8px; margin-top: 12px;
+    }
+    .link-row input {
+      flex: 1; min-width: 0; font: inherit; font-size: 13px;
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px; padding: 11px 12px;
+    }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+
+    .controls { display: flex; gap: 10px; }
+    .controls button { flex: 1; }
+    .toggle-muted { background: var(--red) !important; color: #fff !important; }
+
+    .toast {
+      position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
+      background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+      padding: 11px 18px; border-radius: 10px; font-size: 14px;
+      opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="dot"></span> Channel D Connect</div>
+    <div class="status" id="status">
+      <span class="light"></span>
+      <span id="statusText">No session</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="video-stage">
+      <div class="badge-live"><span class="rec"></span> LIVE</div>
+      <video id="remoteVideo" autoplay playsinline></video>
+      <div class="placeholder" id="placeholder">
+        <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="2" y="6" width="14" height="12" rx="2"/><path d="m22 8-6 4 6 4V8Z"/>
+        </svg>
+        <div>
+          <div style="font-size:15px;color:var(--text);font-weight:600;margin-bottom:4px;">No guest connected</div>
+          <div>Create a session and send the link to the dental practice.</div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="sidebar">
+      <div class="card">
+        <h2>Session</h2>
+        <button class="btn-primary" id="createBtn">Create Session</button>
+        <div id="linkArea" style="display:none;">
+          <div class="link-row">
+            <input id="linkInput" readonly />
+            <button class="btn-secondary" id="copyBtn">Copy</button>
+          </div>
+          <div class="hint">Send this link to the practice. They open it on their phone and share their camera. You'll see their feed here and can talk to them.</div>
+        </div>
+      </div>
+
+      <div class="card" id="controlsCard" style="display:none;">
+        <h2>Your Microphone</h2>
+        <div class="controls">
+          <button class="btn-secondary" id="muteBtn">Mute Mic</button>
+        </div>
+        <div class="hint" id="micHint">You are audio-only — the guest hears you but does not see you.</div>
+      </div>
+
+      <div class="card" id="dangerCard" style="display:none;">
+        <button class="btn-danger" id="endBtn" style="width:100%;">End Session</button>
+      </div>
+    </aside>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    // ICE config is fetched from the server so TURN credentials stay server-side.
+    // Falls back to STUN-only if the request fails.
+    const DEFAULT_ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+    let rtcConfig = DEFAULT_ICE;
+    let iceConfigLoaded = false;
+
+    async function ensureIceConfig() {
+      if (iceConfigLoaded) return;
+      try {
+        const res = await fetch('/api/ice-servers');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.iceServers) && data.iceServers.length) {
+            rtcConfig = data;
+          }
+        }
+      } catch (_) { /* keep STUN-only fallback */ }
+      iceConfigLoaded = true;
+    }
+
+    // --- DOM ---
+    const els = {
+      status: document.getElementById('status'),
+      statusText: document.getElementById('statusText'),
+      createBtn: document.getElementById('createBtn'),
+      linkArea: document.getElementById('linkArea'),
+      linkInput: document.getElementById('linkInput'),
+      copyBtn: document.getElementById('copyBtn'),
+      controlsCard: document.getElementById('controlsCard'),
+      muteBtn: document.getElementById('muteBtn'),
+      dangerCard: document.getElementById('dangerCard'),
+      endBtn: document.getElementById('endBtn'),
+      remoteVideo: document.getElementById('remoteVideo'),
+      toast: document.getElementById('toast'),
+    };
+
+    let socket = null;
+    let pc = null;
+    let localStream = null;
+    let roomId = null;
+    let makingOffer = false;
+
+    // --- Helpers ---
+    function setStatus(state, text) {
+      els.status.className = 'status ' + state;
+      els.statusText.textContent = text;
+    }
+
+    let toastTimer = null;
+    function toast(msg) {
+      els.toast.textContent = msg;
+      els.toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => els.toast.classList.remove('show'), 2200);
+    }
+
+    function buildLink(id) {
+      return `${location.origin}/join/${id}`;
+    }
+
+    // --- Media: host is audio-only ---
+    async function ensureLocalAudio() {
+      if (localStream) return localStream;
+      localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+      return localStream;
+    }
+
+    // --- Peer connection ---
+    function createPeerConnection() {
+      closePeerConnection();
+      pc = new RTCPeerConnection(rtcConfig);
+
+      // Send our mic track(s).
+      if (localStream) {
+        localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+      }
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          socket.emit('signal', { candidate: e.candidate });
+        }
+      };
+
+      pc.ontrack = (e) => {
+        // Guest sends camera video (+ their mic audio).
+        els.remoteVideo.srcObject = e.streams[0];
+      };
+
+      pc.onconnectionstatechange = () => {
+        const s = pc.connectionState;
+        if (s === 'connected') {
+          document.body.classList.add('is-connected');
+          setStatus('connected', 'Connected');
+          els.controlsCard.style.display = '';
+          els.dangerCard.style.display = '';
+        } else if (s === 'disconnected' || s === 'failed') {
+          setStatus('disconnected', 'Guest disconnected');
+          document.body.classList.remove('is-connected');
+        }
+      };
+
+      return pc;
+    }
+
+    function closePeerConnection() {
+      if (pc) {
+        pc.onicecandidate = null;
+        pc.ontrack = null;
+        pc.onconnectionstatechange = null;
+        try { pc.close(); } catch (_) {}
+        pc = null;
+      }
+      els.remoteVideo.srcObject = null;
+    }
+
+    // Host is the offerer.
+    async function makeOffer() {
+      if (!pc) createPeerConnection();
+      try {
+        makingOffer = true;
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('signal', { description: pc.localDescription });
+      } catch (err) {
+        console.error('makeOffer failed', err);
+      } finally {
+        makingOffer = false;
+      }
+    }
+
+    // --- Signaling ---
+    async function handleSignal(payload) {
+      await ensureIceConfig();
+      if (!pc) createPeerConnection();
+      try {
+        if (payload.description) {
+          await pc.setRemoteDescription(payload.description);
+          if (payload.description.type === 'answer') {
+            // done
+          }
+        } else if (payload.candidate) {
+          try {
+            await pc.addIceCandidate(payload.candidate);
+          } catch (err) {
+            // Ignore candidate errors that can happen during renegotiation.
+            console.warn('addIceCandidate', err);
+          }
+        }
+      } catch (err) {
+        console.error('handleSignal failed', err);
+      }
+    }
+
+    // --- Socket wiring ---
+    function connectSocket() {
+      socket = io();
+
+      socket.on('connect', () => {
+        // If we already had a room (reload / reconnect), re-attach to it.
+        if (roomId) {
+          socket.emit('host-rejoin', roomId, (res) => {
+            if (res && res.guestConnected) {
+              setStatus('waiting', 'Guest reconnecting…');
+            }
+          });
+        }
+      });
+
+      socket.on('guest-ready', async () => {
+        setStatus('waiting', 'Guest connecting…');
+        await ensureIceConfig();
+        await ensureLocalAudio().catch(() => {});
+        createPeerConnection();
+        await makeOffer();
+      });
+
+      socket.on('signal', handleSignal);
+
+      socket.on('peer-state', (state) => {
+        if (typeof state.muted === 'boolean') {
+          // Could surface guest mute state here if desired.
+        }
+      });
+
+      socket.on('peer-disconnected', ({ role }) => {
+        if (role === 'guest') {
+          setStatus('disconnected', 'Guest disconnected');
+          document.body.classList.remove('is-connected');
+          els.remoteVideo.srcObject = null;
+          closePeerConnection();
+        }
+      });
+
+      socket.on('disconnect', () => {
+        setStatus('disconnected', 'Reconnecting…');
+      });
+    }
+
+    // --- UI actions ---
+    els.createBtn.addEventListener('click', async () => {
+      els.createBtn.disabled = true;
+      // Try to grab the mic up front, but don't block link creation on it —
+      // it's re-acquired when the guest actually connects.
+      try {
+        await ensureLocalAudio();
+      } catch (err) {
+        toast('Mic not enabled yet — allow it before the guest joins so they can hear you.');
+      }
+      if (!socket) connectSocket();
+
+      const doCreate = () => {
+        socket.emit('create-room', {}, (res) => {
+          roomId = res.roomId;
+          const link = buildLink(roomId);
+          els.linkInput.value = link;
+          els.linkArea.style.display = '';
+          els.createBtn.textContent = 'Session Active';
+          setStatus('waiting', 'Waiting for guest…');
+          history.replaceState(null, '', `/host#${roomId}`);
+        });
+      };
+
+      if (socket.connected) doCreate();
+      else socket.once('connect', doCreate);
+    });
+
+    els.copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(els.linkInput.value);
+        toast('Link copied to clipboard');
+      } catch (_) {
+        els.linkInput.select();
+        document.execCommand('copy');
+        toast('Link copied');
+      }
+    });
+
+    els.muteBtn.addEventListener('click', () => {
+      if (!localStream) return;
+      const track = localStream.getAudioTracks()[0];
+      if (!track) return;
+      track.enabled = !track.enabled;
+      const muted = !track.enabled;
+      els.muteBtn.textContent = muted ? 'Unmute Mic' : 'Mute Mic';
+      els.muteBtn.classList.toggle('toggle-muted', muted);
+      if (socket) socket.emit('peer-state', { muted });
+    });
+
+    els.endBtn.addEventListener('click', () => {
+      closePeerConnection();
+      if (localStream) { localStream.getTracks().forEach((t) => t.stop()); localStream = null; }
+      if (socket) socket.disconnect();
+      location.href = '/host';
+    });
+
+    // Restore room id from hash if the host reloaded.
+    if (location.hash.length > 1) {
+      roomId = location.hash.slice(1);
+      connectSocket();
+      els.linkInput.value = buildLink(roomId);
+      els.linkArea.style.display = '';
+      els.createBtn.textContent = 'Session Active';
+      els.createBtn.disabled = false;
+      setStatus('waiting', 'Waiting for guest…');
+      // Grab mic up front so re-negotiation works on reconnect.
+      ensureLocalAudio().catch(() => {});
+    }
+  })();
+  </script>
+</body>
+</html>
