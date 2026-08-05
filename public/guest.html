@@ -107,6 +107,17 @@
       display: none; align-items: center; gap: 8px; z-index: 5;
     }
     body.is-connected .host-audio { display: flex; }
+
+    /* Shown only when the phone blocks auto-playing the agent's audio. */
+    .audio-unlock {
+      position: absolute; top: calc(env(safe-area-inset-top, 0px) + 56px);
+      left: 50%; transform: translateX(-50%);
+      display: none; z-index: 10;
+      background: var(--accent); color: #fff; border: none;
+      border-radius: 999px; padding: 13px 22px; font: inherit; font-weight: 600; font-size: 15px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.45); cursor: pointer; animation: pulse 1.6s infinite;
+    }
+    .audio-unlock.show { display: block; }
   </style>
 </head>
 <body>
@@ -125,6 +136,8 @@
   <div class="host-audio" id="hostAudio">
     <span>🔊</span> Support agent connected
   </div>
+
+  <button class="audio-unlock" id="audioUnlock">🔊 Tap to hear the support agent</button>
 
   <div class="controls hidden" id="controls">
     <div class="ctrl-wrap">
@@ -204,6 +217,7 @@
       overlayText: document.getElementById('overlayText'),
       startBtn: document.getElementById('startBtn'),
       hostAudio: document.getElementById('hostAudio'),
+      audioUnlock: document.getElementById('audioUnlock'),
     };
 
     let socket = null;
@@ -223,6 +237,16 @@
       els.overlayText.textContent = text;
       els.startBtn.textContent = 'Try Again';
       els.startBtn.disabled = false;
+    }
+
+    // Phones often block auto-playing audio until the user taps. Try to play the
+    // agent's audio; if the browser blocks it, reveal a tap-to-hear button.
+    function playHostAudio() {
+      const p = els.remoteAudio.play();
+      if (p && typeof p.then === 'function') {
+        p.then(() => els.audioUnlock.classList.remove('show'))
+         .catch(() => els.audioUnlock.classList.add('show'));
+      }
     }
 
     // --- Media ---
@@ -259,7 +283,7 @@
       pc.ontrack = (e) => {
         // Host sends audio only.
         els.remoteAudio.srcObject = e.streams[0];
-        els.remoteAudio.play().catch(() => {});
+        playHostAudio();
       };
 
       pc.onconnectionstatechange = () => {
@@ -408,12 +432,16 @@
       els.overlay.classList.add('hidden');
       els.controls.classList.remove('hidden');
       setStatus('waiting', 'Waiting for agent…');
+      // Prime the audio element within this tap so the agent's voice can play
+      // later without another tap on most phones.
+      els.remoteAudio.play().catch(() => {});
       await ensureIceConfig();
       connectSocket();
     });
 
     els.flipBtn.addEventListener('click', flipCamera);
     els.muteBtn.addEventListener('click', toggleMute);
+    els.audioUnlock.addEventListener('click', playHostAudio);
 
     // Basic validity check on load.
     if (!roomId || roomId === 'join') {
