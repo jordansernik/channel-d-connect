@@ -75,32 +75,38 @@ app.get('/api/room/:roomId', (req, res) => {
 // networks where direct peer-to-peer fails. Kept server-side so credentials
 // aren't hard-coded in the client and can be rotated without a redeploy.
 async function buildIceServers() {
-  const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+  const base = [{ urls: 'stun:stun.l.google.com:19302' }];
 
-  // Preferred: Metered — fetch fresh TURN credentials with an API key.
-  if (process.env.METERED_DOMAIN && process.env.METERED_API_KEY) {
+  // Preferred: Cloudflare TURN (1,000 GB/mo free, then $0.05/GB). Generates
+  // short-lived credentials on each request using a TURN key ID + API token.
+  if (process.env.CLOUDFLARE_TURN_KEY_ID && process.env.CLOUDFLARE_TURN_API_TOKEN) {
     try {
-      const url = `https://${process.env.METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${encodeURIComponent(
-        process.env.METERED_API_KEY
-      )}`;
-      const resp = await fetch(url);
-      if (resp.ok) {
-        const list = await resp.json();
-        if (Array.isArray(list)) {
-          for (const s of list) {
-            if (s && s.urls) iceServers.push(s);
-          }
-          return iceServers;
+      const resp = await fetch(
+        `https://rtc.live.cloudflare.com/v1/turn/keys/${process.env.CLOUDFLARE_TURN_KEY_ID}/credentials/generate-ice-servers`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.CLOUDFLARE_TURN_API_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ttl: 86400 }),
         }
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        const ice = data && data.iceServers;
+        const list = Array.isArray(ice) ? ice : ice ? [ice] : [];
+        const valid = list.filter((s) => s && s.urls);
+        if (valid.length) return valid; // Cloudflare's list already includes STUN
       } else {
-        console.error('[ice] Metered credentials fetch failed:', resp.status);
+        console.error('[ice] Cloudflare TURN fetch failed:', resp.status);
       }
     } catch (err) {
-      console.error('[ice] Metered credentials error:', err.message);
+      console.error('[ice] Cloudflare TURN error:', err.message);
     }
   }
 
-  // Fallback: static TURN credentials from env vars.
+  // Fallback: static TURN credentials from any provider.
   if (process.env.TURN_URLS) {
     const urls = process.env.TURN_URLS.split(',')
       .map((s) => s.trim())
@@ -109,11 +115,11 @@ async function buildIceServers() {
       const entry = { urls };
       if (process.env.TURN_USERNAME) entry.username = process.env.TURN_USERNAME;
       if (process.env.TURN_CREDENTIAL) entry.credential = process.env.TURN_CREDENTIAL;
-      iceServers.push(entry);
+      return [...base, entry];
     }
   }
 
-  return iceServers;
+  return base;
 }
 
 app.get('/api/ice-servers', async (req, res) => {

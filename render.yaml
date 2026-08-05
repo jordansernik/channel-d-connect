@@ -20,13 +20,14 @@ services:
       - key: TEXTBELT_API_KEY
         sync: false
       # TURN relay — needed so calls connect on cellular / restrictive networks.
-      # Preferred: Metered (metered.ca) API key + your app domain.
-      - key: METERED_DOMAIN
+      # Preferred: Cloudflare TURN (1,000 GB/mo free). Create a TURN key in the
+      # Cloudflare dashboard (Realtime) → set the key ID + API token here.
+      - key: CLOUDFLARE_TURN_KEY_ID
         sync: false
-      - key: METERED_API_KEY
+      - key: CLOUDFLARE_TURN_API_TOKEN
         sync: false
-      # Alternative: static TURN credentials from any provider (leave Metered
-      # vars unset to use these). All unset = STUN only.
+      # Alternative: static TURN credentials from any provider (used only if the
+      # Cloudflare vars above are unset). All unset = STUN only.
       - key: TURN_URLS
         sync: false
       - key: TURN_USERNAME
