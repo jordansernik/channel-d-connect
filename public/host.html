@@ -165,9 +165,7 @@
     }
     .ai-attach-btn:hover { background: #232b3a; }
     .ai-attach-btn.armed { border-color: var(--accent); color: var(--accent); }
-    .ai-attach-btn.recording { background: var(--red); border-color: var(--red); color: #fff; animation: recPulse 1.3s infinite; }
-    @keyframes recPulse { 0%,100% { opacity: 1; } 50% { opacity: .7; } }
-    .ai-send { width: 100%; }
+    .ai-send { flex: 1; }
     .ai-history-link { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--accent); text-decoration: none; }
     .ai-history-link:hover { text-decoration: underline; }
 
@@ -289,10 +287,9 @@
         <div class="ai-compose">
           <textarea id="aiInput" class="ai-input" rows="4" placeholder="Message the copilot…  (Enter to send, Shift+Enter for a new line)"></textarea>
           <div class="ai-compose-row">
-            <button class="ai-attach-btn" id="voiceBtn" title="Dictate by voice — mutes the practice while you speak, unmutes when you stop">🎤 Voice</button>
             <button class="ai-attach-btn" id="attachBtn" title="Attach a screen grab of the guest video">📷 Attach screen</button>
+            <button class="btn-primary ai-send" id="sendBtn">Send</button>
           </div>
-          <button class="btn-primary ai-send" id="sendBtn">Send</button>
         </div>
         <a class="ai-history-link" href="/history" target="_blank" rel="noopener">View chat history →</a>
       </div>
@@ -347,7 +344,6 @@
       aiInput: document.getElementById('aiInput'),
       sendBtn: document.getElementById('sendBtn'),
       attachBtn: document.getElementById('attachBtn'),
-      voiceBtn: document.getElementById('voiceBtn'),
       aiAttachment: document.getElementById('aiAttachment'),
       aiAttachThumb: document.getElementById('aiAttachThumb'),
       aiAttachRemove: document.getElementById('aiAttachRemove'),
@@ -715,7 +711,6 @@
     }
 
     function sendMessage() {
-      if (voiceOn) stopVoice(); // finalize dictation and unmute the practice
       const rid = currentRoomId();
       if (!rid) { toast('Create a session first.'); return; }
       const text = els.aiInput.value.trim();
@@ -765,78 +760,6 @@
         e.preventDefault();
         sendMessage();
       }
-    });
-
-    // --- Voice dictation (mutes the practice while you talk) ---
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recognition = null;
-    let voiceOn = false;        // currently listening
-    let wantVoice = false;      // intend to keep listening through pauses
-    let voicePrevMuted = false; // mic mute state before dictation started
-    let voiceBase = '';         // input text captured when dictation began
-
-    function updateVoiceUI(active) {
-      voiceOn = active;
-      els.voiceBtn.classList.toggle('recording', active);
-      els.voiceBtn.textContent = active ? '⏺ Listening…' : '🎤 Voice';
-    }
-
-    function onVoiceResult(e) {
-      let interim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) voiceBase = (voiceBase ? voiceBase + ' ' : '') + t.trim();
-        else interim += t;
-      }
-      els.aiInput.value = (voiceBase + (interim ? ' ' + interim : '')).trim();
-      autoGrow();
-    }
-
-    function beginRecognition() {
-      recognition = new SpeechRec();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-      recognition.onresult = onVoiceResult;
-      recognition.onerror = (e) => {
-        if (e.error === 'no-speech' || e.error === 'aborted') return; // handled by onend
-        toast('Voice error: ' + e.error);
-        wantVoice = false;
-      };
-      recognition.onend = () => {
-        // Chrome ends on silence even with continuous=true — restart until stopped.
-        if (wantVoice) { try { recognition.start(); } catch (_) { finishVoice(); } }
-        else finishVoice();
-      };
-      try { recognition.start(); } catch (_) {}
-    }
-
-    function startVoice() {
-      voiceBase = els.aiInput.value.trim();
-      voicePrevMuted = micMuted();
-      setMicMuted(true);            // mute the practice while dictating
-      wantVoice = true;
-      updateVoiceUI(true);
-      beginRecognition();
-    }
-
-    function stopVoice() {
-      wantVoice = false;
-      if (recognition) {
-        recognition.onresult = null; // ignore any trailing result after stop
-        try { recognition.stop(); } catch (_) {}
-      }
-    }
-
-    function finishVoice() {
-      updateVoiceUI(false);
-      setMicMuted(voicePrevMuted);   // restore the practice audio
-      els.aiInput.focus();
-    }
-
-    els.voiceBtn.addEventListener('click', () => {
-      if (!SpeechRec) { toast('Voice input needs Chrome or Edge on desktop.'); return; }
-      if (voiceOn) stopVoice(); else startVoice();
     });
 
     // Restore room id from hash if the host reloaded.
