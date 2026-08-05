@@ -199,6 +199,8 @@
     .controls { display: flex; gap: 10px; }
     .controls button { flex: 1; }
     .toggle-muted { background: var(--red) !important; color: #fff !important; }
+    .mic-meter { height: 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; margin: 12px 0 6px; }
+    .mic-meter-fill { height: 100%; width: 0%; background: var(--green); transition: width .06s linear; }
 
     .toast {
       position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
@@ -265,7 +267,8 @@
         <div class="controls">
           <button class="btn-secondary" id="muteBtn">Mute Mic</button>
         </div>
-        <div class="hint" id="micHint">You are audio-only — the guest hears you but does not see you.</div>
+        <div class="mic-meter" title="Live microphone level"><div class="mic-meter-fill" id="micMeterFill"></div></div>
+        <div class="hint" id="micHint">Speak — this bar should move when your mic hears you. If it stays flat, your mic isn't being picked up (wrong device or muted).</div>
       </div>
 
       <div class="card" id="dangerCard" style="display:none;">
@@ -338,6 +341,7 @@
       dangerCard: document.getElementById('dangerCard'),
       endBtn: document.getElementById('endBtn'),
       remoteVideo: document.getElementById('remoteVideo'),
+      micMeterFill: document.getElementById('micMeterFill'),
       rotateBtn: document.getElementById('rotateBtn'),
       toast: document.getElementById('toast'),
       aiMessages: document.getElementById('aiMessages'),
@@ -394,7 +398,36 @@
     async function ensureLocalAudio() {
       if (localStream) return localStream;
       localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+      startMicMeter(localStream);
       return localStream;
+    }
+
+    // Live input-level meter so the agent can see if their mic is being heard.
+    let audioCtx = null;
+    let meterRaf = null;
+    function startMicMeter(stream) {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        audioCtx.resume().catch(() => {});
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser); // note: not connected to output — no feedback
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        cancelAnimationFrame(meterRaf);
+        const loop = () => {
+          analyser.getByteTimeDomainData(data);
+          let peak = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = Math.abs(data[i] - 128);
+            if (v > peak) peak = v;
+          }
+          const level = Math.min(100, Math.round((peak / 128) * 200)); // amplify for visibility
+          els.micMeterFill.style.width = level + '%';
+          meterRaf = requestAnimationFrame(loop);
+        };
+        loop();
+      } catch (_) { /* Web Audio unavailable — meter just stays flat */ }
     }
 
     // --- Peer connection ---
