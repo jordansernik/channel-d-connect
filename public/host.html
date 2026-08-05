@@ -95,10 +95,28 @@
     body.is-connected .placeholder { display: none; }
 
     .sidebar {
-      width: 420px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px;
+      width: 420px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px;
       min-height: 0;
     }
     @media (max-width: 900px) { .sidebar { width: 100%; } }
+
+    /* Sidebar tabs */
+    .tabs {
+      display: flex; gap: 6px; background: var(--panel);
+      border: 1px solid var(--border); border-radius: 12px; padding: 4px; flex-shrink: 0;
+    }
+    .tab {
+      flex: 1; background: none; border: none; color: var(--muted);
+      font: inherit; font-weight: 600; font-size: 13px; padding: 9px; border-radius: 9px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { background: var(--panel-2); color: var(--text); }
+    .tab-dot { display: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+    .tab-dot.show { display: inline-block; }
+    .tab-panel { flex: 1; min-height: 0; display: none; flex-direction: column; gap: 16px; }
+    .tab-panel.active { display: flex; }
+    #panelSession { overflow-y: auto; }
 
     /* AI copilot panel */
     .ai-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -224,6 +242,12 @@
     </div>
 
     <aside class="sidebar">
+      <div class="tabs">
+        <button class="tab active" data-tab="session" id="tabSession">Session</button>
+        <button class="tab" data-tab="chat" id="tabChat">AI Copilot <span class="tab-dot" id="chatDot"></span></button>
+      </div>
+
+      <div class="tab-panel active" id="panelSession">
       <div class="card">
         <h2>Session</h2>
         <button class="btn-primary" id="createBtn">Create Session</button>
@@ -247,7 +271,9 @@
       <div class="card" id="dangerCard" style="display:none;">
         <button class="btn-danger" id="endBtn" style="width:100%;">End Session</button>
       </div>
+      </div><!-- /panelSession -->
 
+      <div class="tab-panel" id="panelChat">
       <div class="card ai-card">
         <h2>AI Copilot</h2>
         <div class="ai-messages" id="aiMessages">
@@ -267,6 +293,7 @@
         </div>
         <a class="ai-history-link" href="/history" target="_blank" rel="noopener">View chat history →</a>
       </div>
+      </div><!-- /panelChat -->
     </aside>
   </main>
 
@@ -576,6 +603,25 @@
       location.href = '/host';
     });
 
+    // --- Sidebar tabs (Session / AI Copilot) ---
+    const chatDot = document.getElementById('chatDot');
+    function chatTabActive() {
+      return document.getElementById('panelChat').classList.contains('active');
+    }
+    document.querySelectorAll('.tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        const isChat = tab.dataset.tab === 'chat';
+        document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(isChat ? 'panelChat' : 'panelSession').classList.add('active');
+        if (isChat) {
+          chatDot.classList.remove('show');
+          scrollMessages();
+        }
+      });
+    });
+
     // --- AI copilot chat ---
     let pendingImage = null; // data URL of an attached screen grab, or null
 
@@ -638,6 +684,8 @@
         bubble.className = 'ai-bubble assistant';
         bubble.textContent = data.reply;
       }
+      // Flag the Copilot tab if the reply arrives while it's not showing.
+      if (!chatTabActive()) chatDot.classList.add('show');
       scrollMessages();
     }
 
