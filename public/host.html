@@ -576,6 +576,9 @@
       // it's re-acquired when the guest actually connects.
       try {
         await ensureLocalAudio();
+        // Show the mic card + level meter now so the agent can confirm their
+        // microphone is working before the guest even joins.
+        els.controlsCard.style.display = '';
       } catch (err) {
         toast('Mic not enabled yet — allow it before the guest joins so they can hear you.');
       }
