@@ -50,6 +50,13 @@
     .status.disconnected .light { background: var(--red); }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
+    .browser-warn {
+      display: none; background: rgba(245, 158, 11, 0.12); color: var(--amber);
+      border-bottom: 1px solid var(--border); padding: 11px 22px; font-size: 13px;
+      text-align: center; line-height: 1.5;
+    }
+    .browser-warn.show { display: block; }
+
     .header-right { display: flex; align-items: center; gap: 12px; }
     .rotate-btn {
       display: none; align-items: center; gap: 8px;
@@ -228,6 +235,10 @@
     </div>
   </header>
 
+  <div class="browser-warn" id="braveWarn">
+    ⚠️ You're using <strong>Brave</strong>, which can block your microphone so the practice can't hear you. For reliable audio, open this page in <strong>Safari</strong> or <strong>Chrome</strong>.
+  </div>
+
   <main>
     <div class="video-stage">
       <div class="badge-live"><span class="rec"></span> LIVE</div>
@@ -353,6 +364,14 @@
       aiAttachRemove: document.getElementById('aiAttachRemove'),
       captureCanvas: document.getElementById('captureCanvas'),
     };
+
+    // Brave's privacy protections can starve the mic (the practice hears only
+    // hiss) and block voice services — warn the agent to switch browsers.
+    if (navigator.brave && typeof navigator.brave.isBrave === 'function') {
+      navigator.brave.isBrave()
+        .then((isBrave) => { if (isBrave) document.getElementById('braveWarn').classList.add('show'); })
+        .catch(() => {});
+    }
 
     let socket = null;
     let pc = null;
