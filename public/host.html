@@ -100,39 +100,54 @@
     }
     @media (max-width: 900px) { .sidebar { width: 100%; } }
 
-    /* AI diagnosis panel */
+    /* AI copilot panel */
     .ai-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    .ai-label { font-size: 12px; color: var(--muted); font-weight: 600; display: block; margin-bottom: 6px; }
-    .ai-textarea {
-      width: 100%; resize: vertical; min-height: 50px; max-height: 130px;
-      background: var(--bg); color: var(--text); border: 1px solid var(--border);
-      border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 13px; margin-bottom: 12px;
-    }
     .ai-messages {
-      flex: 1; min-height: 140px; overflow-y: auto;
-      display: flex; flex-direction: column; gap: 12px; padding: 2px;
+      flex: 1; min-height: 160px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 10px; padding: 4px;
     }
     .ai-empty { color: var(--muted); font-size: 13px; text-align: center; margin: auto; padding: 24px 12px; line-height: 1.5; }
-    .ai-msg { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: var(--panel-2); }
-    .ai-thumb { width: 100%; border-radius: 8px; display: block; margin-bottom: 8px; background: #000; }
-    .ai-note-line { font-size: 12px; color: var(--muted); font-style: italic; margin-bottom: 8px; }
-    .ai-reply { font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
-    .ai-reply.error { color: var(--red); }
-    .ai-loading { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+    .ai-bubble {
+      max-width: 88%; border-radius: 12px; padding: 9px 12px;
+      font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word;
+    }
+    .ai-bubble.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+    .ai-bubble.assistant { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+    .ai-bubble.assistant.error { color: var(--red); }
+    .ai-bubble img { width: 100%; border-radius: 8px; display: block; margin-bottom: 6px; background: #000; }
+    .ai-loading { display: flex; align-items: center; gap: 8px; color: var(--muted); }
     .ai-spinner {
       width: 14px; height: 14px; border: 2px solid var(--border);
       border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .ai-retry {
-      display: block; margin-top: 8px; background: var(--panel-2); border: 1px solid var(--border);
-      color: var(--text); border-radius: 8px; padding: 6px 12px; font: inherit; font-weight: 600; font-size: 12px; cursor: pointer;
+      display: inline-block; margin-top: 8px; background: var(--panel); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; padding: 5px 12px; font: inherit; font-weight: 600; font-size: 12px; cursor: pointer;
     }
-    .ai-compose { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
-    .ai-note {
-      width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border);
-      border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 13px;
+
+    .ai-attachment {
+      display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 8px;
+      border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2);
     }
+    .ai-attachment img { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; background: #000; }
+    .ai-attach-label { font-size: 12px; color: var(--muted); flex: 1; }
+    .ai-attach-remove { background: none; border: none; color: var(--muted); font-size: 14px; cursor: pointer; padding: 4px; }
+    .ai-attach-remove:hover { color: var(--text); }
+
+    .ai-compose { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .ai-input {
+      width: 100%; resize: none; max-height: 120px; background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 13px; line-height: 1.4;
+    }
+    .ai-compose-row { display: flex; gap: 8px; }
+    .ai-attach-btn {
+      flex: 1; background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+      border-radius: 10px; padding: 9px 10px; font: inherit; font-weight: 600; font-size: 12px; cursor: pointer;
+    }
+    .ai-attach-btn:hover { background: #232b3a; }
+    .ai-attach-btn.armed { border-color: var(--accent); color: var(--accent); }
+    .ai-send { flex: 1; }
     .ai-history-link { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--accent); text-decoration: none; }
     .ai-history-link:hover { text-decoration: underline; }
 
@@ -234,17 +249,23 @@
       </div>
 
       <div class="card ai-card">
-        <h2>AI Diagnosis Assistant</h2>
-        <label class="ai-label" for="caseDesc">Case description</label>
-        <textarea id="caseDesc" class="ai-textarea" placeholder="e.g. Practice needs to uninstall and reinstall the app"></textarea>
+        <h2>AI Copilot</h2>
         <div class="ai-messages" id="aiMessages">
-          <div class="ai-empty">Capture the guest's TV screen to get AI help identifying the device and the next steps to read aloud.</div>
+          <div class="ai-empty">Chat with the copilot — type a question or note, and optionally attach a screen grab of the practice's TV. It already knows you're Channel D helping get the app running on their TV.</div>
+        </div>
+        <div class="ai-attachment" id="aiAttachment" style="display:none;">
+          <img id="aiAttachThumb" alt="attachment" />
+          <span class="ai-attach-label">Screenshot attached</span>
+          <button class="ai-attach-remove" id="aiAttachRemove" title="Remove attachment">✕</button>
         </div>
         <div class="ai-compose">
-          <input id="captureNote" class="ai-note" placeholder="Optional note for this capture (e.g. they just pressed Settings)" />
-          <button class="btn-primary" id="captureBtn">📷 Capture Screen</button>
+          <textarea id="aiInput" class="ai-input" rows="1" placeholder="Message the copilot…  (Enter to send, Shift+Enter for a new line)"></textarea>
+          <div class="ai-compose-row">
+            <button class="ai-attach-btn" id="attachBtn" title="Attach a screen grab of the guest video">📷 Attach screen</button>
+            <button class="btn-primary ai-send" id="sendBtn">Send</button>
+          </div>
         </div>
-        <a class="ai-history-link" href="/history" target="_blank" rel="noopener">View case history →</a>
+        <a class="ai-history-link" href="/history" target="_blank" rel="noopener">View chat history →</a>
       </div>
     </aside>
   </main>
@@ -292,10 +313,13 @@
       remoteVideo: document.getElementById('remoteVideo'),
       rotateBtn: document.getElementById('rotateBtn'),
       toast: document.getElementById('toast'),
-      caseDesc: document.getElementById('caseDesc'),
       aiMessages: document.getElementById('aiMessages'),
-      captureNote: document.getElementById('captureNote'),
-      captureBtn: document.getElementById('captureBtn'),
+      aiInput: document.getElementById('aiInput'),
+      sendBtn: document.getElementById('sendBtn'),
+      attachBtn: document.getElementById('attachBtn'),
+      aiAttachment: document.getElementById('aiAttachment'),
+      aiAttachThumb: document.getElementById('aiAttachThumb'),
+      aiAttachRemove: document.getElementById('aiAttachRemove'),
       captureCanvas: document.getElementById('captureCanvas'),
     };
 
@@ -552,11 +576,12 @@
       location.href = '/host';
     });
 
-    // --- AI diagnosis assistant ---
+    // --- AI copilot chat ---
+    let pendingImage = null; // data URL of an attached screen grab, or null
+
     function currentRoomId() {
       return roomId || (location.hash.length > 1 ? location.hash.slice(1) : null);
     }
-
     function scrollMessages() {
       els.aiMessages.scrollTop = els.aiMessages.scrollHeight;
     }
@@ -575,77 +600,115 @@
       return c.toDataURL('image/jpeg', 0.8);
     }
 
-    function retryBody(ref) {
-      const body = { roomId: currentRoomId(), caseDescription: els.caseDesc.value, note: ref.note };
-      if (ref.captureId) body.captureId = ref.captureId;
-      else body.image = ref.image;
-      return body;
+    function setAttachment(dataUrl) {
+      pendingImage = dataUrl;
+      if (dataUrl) {
+        els.aiAttachThumb.src = dataUrl;
+        els.aiAttachment.style.display = 'flex';
+        els.attachBtn.classList.add('armed');
+      } else {
+        els.aiAttachment.style.display = 'none';
+        els.attachBtn.classList.remove('armed');
+      }
     }
 
-    function showError(replyEl, msg, ref) {
-      replyEl.className = 'ai-reply error';
-      replyEl.textContent = msg;
-      const btn = document.createElement('button');
-      btn.className = 'ai-retry';
-      btn.textContent = 'Retry';
-      btn.addEventListener('click', () => runDiagnose(retryBody(ref), replyEl, ref));
-      replyEl.appendChild(btn);
+    function autoGrow() {
+      els.aiInput.style.height = 'auto';
+      els.aiInput.style.height = Math.min(els.aiInput.scrollHeight, 120) + 'px';
     }
 
-    async function runDiagnose(body, replyEl, ref) {
-      replyEl.className = 'ai-loading';
-      replyEl.innerHTML = '<span class="ai-spinner"></span> Analyzing…';
+    function addBubble(cls) {
+      const b = document.createElement('div');
+      b.className = 'ai-bubble ' + cls;
+      els.aiMessages.appendChild(b);
+      return b;
+    }
+
+    function fillAssistant(bubble, data, retryFn) {
+      if (data.error) {
+        bubble.className = 'ai-bubble assistant error';
+        bubble.textContent = data.error;
+        const btn = document.createElement('button');
+        btn.className = 'ai-retry';
+        btn.textContent = 'Retry';
+        btn.addEventListener('click', retryFn);
+        bubble.appendChild(document.createElement('br'));
+        bubble.appendChild(btn);
+      } else {
+        bubble.className = 'ai-bubble assistant';
+        bubble.textContent = data.reply;
+      }
       scrollMessages();
+    }
+
+    async function postChat(body, bubble) {
+      bubble.className = 'ai-bubble assistant';
+      bubble.innerHTML = '<span class="ai-loading"><span class="ai-spinner"></span> Thinking…</span>';
+      scrollMessages();
+      const retryFn = () => postChat({ roomId: currentRoomId(), retry: true }, bubble);
       try {
-        const r = await fetch('/api/diagnose', {
+        const r = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
         const data = await r.json();
-        if (data.captureId) ref.captureId = data.captureId;
-        if (data.error) {
-          showError(replyEl, data.error, ref);
-        } else {
-          replyEl.className = 'ai-reply';
-          replyEl.textContent = data.aiReply;
-        }
+        fillAssistant(bubble, data, retryFn);
       } catch (e) {
-        showError(replyEl, 'Network error: ' + e.message, ref);
+        fillAssistant(bubble, { error: 'Network error: ' + e.message }, retryFn);
       }
-      scrollMessages();
     }
 
-    els.captureBtn.addEventListener('click', () => {
+    function sendMessage() {
       const rid = currentRoomId();
       if (!rid) { toast('Create a session first.'); return; }
-      const dataUrl = captureFrame();
-      if (!dataUrl) { toast('No guest video to capture yet.'); return; }
-
-      const note = els.captureNote.value.trim();
-      els.captureNote.value = '';
+      const text = els.aiInput.value.trim();
+      if (!text && !pendingImage) return;
 
       const empty = els.aiMessages.querySelector('.ai-empty');
       if (empty) empty.remove();
 
-      const msg = document.createElement('div');
-      msg.className = 'ai-msg';
-      const img = document.createElement('img');
-      img.className = 'ai-thumb';
-      img.src = dataUrl;
-      msg.appendChild(img);
-      if (note) {
-        const n = document.createElement('div');
-        n.className = 'ai-note-line';
-        n.textContent = note;
-        msg.appendChild(n);
+      // Render the agent's turn.
+      const userBubble = addBubble('user');
+      if (pendingImage) {
+        const img = document.createElement('img');
+        img.src = pendingImage;
+        userBubble.appendChild(img);
       }
-      const reply = document.createElement('div');
-      msg.appendChild(reply);
-      els.aiMessages.appendChild(msg);
+      if (text) {
+        const t = document.createElement('span');
+        t.textContent = text;
+        userBubble.appendChild(t);
+      }
 
-      const ref = { captureId: null, note, image: dataUrl };
-      runDiagnose({ roomId: rid, caseDescription: els.caseDesc.value, note, image: dataUrl }, reply, ref);
+      const body = { roomId: rid, text };
+      if (pendingImage) body.image = pendingImage;
+
+      // Reset the composer.
+      els.aiInput.value = '';
+      autoGrow();
+      setAttachment(null);
+
+      const assistantBubble = addBubble('assistant');
+      postChat(body, assistantBubble);
+    }
+
+    els.attachBtn.addEventListener('click', () => {
+      const rid = currentRoomId();
+      if (!rid) { toast('Create a session first.'); return; }
+      const frame = captureFrame();
+      if (!frame) { toast('No guest video to capture yet.'); return; }
+      setAttachment(frame);
+      els.aiInput.focus();
+    });
+    els.aiAttachRemove.addEventListener('click', () => setAttachment(null));
+    els.sendBtn.addEventListener('click', sendMessage);
+    els.aiInput.addEventListener('input', autoGrow);
+    els.aiInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
     });
 
     // Restore room id from hash if the host reloaded.

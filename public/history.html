@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Channel D Connect — Case History</title>
+  <title>Channel D Connect — Chat History</title>
   <style>
     :root {
       --bg: #0d1117; --panel: #161b22; --panel-2: #1c2230; --border: #2a3140;
@@ -30,28 +30,30 @@
     .list-item:hover { background: var(--panel); }
     .list-item.active { background: var(--panel-2); }
     .list-item .date { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-    .list-item .desc { font-size: 14px; margin-bottom: 4px; }
+    .list-item .desc { font-size: 14px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .list-item .count { font-size: 12px; color: var(--muted); }
     .list-empty, .thread-empty { color: var(--muted); padding: 40px 24px; text-align: center; }
 
     .thread { flex: 1; overflow-y: auto; padding: 24px; }
     .thread h2 { font-size: 16px; margin-bottom: 4px; }
     .thread .sub { font-size: 13px; color: var(--muted); margin-bottom: 20px; }
-    .entry { border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 16px; background: var(--panel); max-width: 560px; }
-    .entry img { width: 100%; border-radius: 8px; display: block; margin-bottom: 10px; background: #000; }
-    .entry .note { font-size: 12px; color: var(--muted); font-style: italic; margin-bottom: 8px; }
-    .entry .reply { font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
-    .entry .time { font-size: 11px; color: var(--muted); margin-top: 10px; }
+    .bubbles { display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
+    .bubble { max-width: 80%; border-radius: 12px; padding: 10px 13px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; }
+    .bubble.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+    .bubble.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+    .bubble img { width: 100%; max-width: 320px; border-radius: 8px; display: block; margin-bottom: 8px; background: #000; }
+    .bubble .time { font-size: 11px; color: var(--muted); margin-top: 8px; }
+    .bubble.user .time { color: rgba(255,255,255,.7); }
   </style>
 </head>
 <body>
   <header>
-    <span class="dot"></span> Channel D Connect — Case History
+    <span class="dot"></span> Channel D Connect — Chat History
     <a href="/host">← Back to host</a>
   </header>
   <main>
     <div class="list" id="list"><div class="list-empty">Loading…</div></div>
-    <div class="thread" id="thread"><div class="thread-empty">Select a case to view its thread.</div></div>
+    <div class="thread" id="thread"><div class="thread-empty">Select a chat to view its transcript.</div></div>
   </main>
 
   <script>
@@ -63,23 +65,30 @@
     function fmt(ts) {
       try { return new Date(ts).toLocaleString(); } catch (_) { return ''; }
     }
+    function escapeHtml(s) {
+      if (s == null) return '';
+      return String(s).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]));
+    }
 
     async function loadList() {
       try {
         const r = await fetch('/api/history');
         const { sessions } = await r.json();
         if (!sessions.length) {
-          listEl.innerHTML = '<div class="list-empty">No cases yet.</div>';
+          listEl.innerHTML = '<div class="list-empty">No chats yet.</div>';
           return;
         }
         listEl.innerHTML = '';
         sessions.forEach((s) => {
           const item = document.createElement('div');
           item.className = 'list-item';
+          const preview = s.preview ? escapeHtml(s.preview) : '<em>(screenshot only)</em>';
           item.innerHTML =
             '<div class="date">' + fmt(s.createdAt) + '</div>' +
-            '<div class="desc">' + (escapeHtml(s.caseDescription) || '<em>(no description)</em>') + '</div>' +
-            '<div class="count">' + s.messageCount + ' capture' + (s.messageCount === 1 ? '' : 's') + ' · room ' + escapeHtml(s.roomId) + '</div>';
+            '<div class="desc">' + preview + '</div>' +
+            '<div class="count">' + s.messageCount + ' message' + (s.messageCount === 1 ? '' : 's') + ' · room ' + escapeHtml(s.roomId) + '</div>';
           item.addEventListener('click', () => {
             document.querySelectorAll('.list-item').forEach((el) => el.classList.remove('active'));
             item.classList.add('active');
@@ -98,31 +107,26 @@
         const r = await fetch('/api/history/' + id);
         const { session, messages } = await r.json();
         let html =
-          '<h2>' + (escapeHtml(session.caseDescription) || '(no description)') + '</h2>' +
-          '<div class="sub">' + fmt(session.createdAt) + ' · room ' + escapeHtml(session.roomId) + '</div>';
+          '<h2>Chat · ' + fmt(session.createdAt) + '</h2>' +
+          '<div class="sub">room ' + escapeHtml(session.roomId) + '</div>';
         if (!messages.length) {
-          html += '<div class="thread-empty">No captures in this case.</div>';
+          html += '<div class="thread-empty">No messages in this chat.</div>';
         } else {
+          html += '<div class="bubbles">';
           messages.forEach((m) => {
-            html += '<div class="entry">';
-            if (m.imageUrl) html += '<img src="' + m.imageUrl + '" alt="capture" />';
-            if (m.note) html += '<div class="note">' + escapeHtml(m.note) + '</div>';
-            html += '<div class="reply">' + (escapeHtml(m.aiReply) || '<em>(no reply)</em>') + '</div>';
+            const cls = m.role === 'assistant' ? 'assistant' : 'user';
+            html += '<div class="bubble ' + cls + '">';
+            if (m.imageUrl) html += '<img src="' + m.imageUrl + '" alt="attachment" />';
+            if (m.text) html += escapeHtml(m.text);
             html += '<div class="time">' + fmt(m.timestamp) + '</div>';
             html += '</div>';
           });
+          html += '</div>';
         }
         threadEl.innerHTML = html;
       } catch (e) {
         threadEl.innerHTML = '<div class="thread-empty">Failed to load: ' + escapeHtml(e.message) + '</div>';
       }
-    }
-
-    function escapeHtml(s) {
-      if (s == null) return '';
-      return String(s).replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-      }[c]));
     }
 
     loadList();

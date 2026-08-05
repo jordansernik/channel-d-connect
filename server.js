@@ -99,38 +99,41 @@ app.get('/api/ice-servers', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// AI diagnosis assistant (host view only)
+// AI copilot chat (host view only)
 // ---------------------------------------------------------------------------
-// Captured JPEGs live on disk under /captures; the DB stores their paths plus
-// the running conversation so nothing is lost on a server restart.
+// A running chat with Claude, scoped to the WebRTC room. Each agent turn is
+// text and/or an optional screen grab of the guest's TV. Attached JPEGs live on
+// disk under /captures; the DB stores their paths + the transcript so nothing
+// is lost on a server restart.
 const capturesDir = path.join(__dirname, 'captures');
 fs.mkdirSync(capturesDir, { recursive: true });
 
-const db = new Database(path.join(__dirname, 'diagnosis.db'));
+const db = new Database(path.join(__dirname, 'chat.db'));
 db.pragma('journal_mode = WAL');
+
+// One row per turn: role 'user' (agent) or 'assistant' (Claude); user turns may
+// carry an image, an assistant turn is text only.
 db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     roomId TEXT,
-    caseDescription TEXT,
     createdAt INTEGER
   );
   CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sessionId INTEGER,
     role TEXT,
-    note TEXT,
+    text TEXT,
     imagePath TEXT,
-    aiReply TEXT,
     timestamp INTEGER
   );
 `);
 
-// Serve captured frames read-only for the history page thumbnails.
+// Serve attached frames read-only for the history page thumbnails.
 app.use('/captures', express.static(capturesDir));
 
-// The Anthropic key never reaches the browser. If it's unset the panel still
-// works for capturing; diagnose just returns a "not configured" message.
+// The Anthropic key never reaches the browser. If it's unset the chat still
+// records messages; the reply is a "not configured" message instead.
 const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null;
 const AI_MODEL = 'claude-sonnet-4-6';
 
@@ -139,7 +142,7 @@ function loadSystemPrompt() {
   try {
     return fs.readFileSync(path.join(__dirname, 'systemPrompt.txt'), 'utf8');
   } catch (_) {
-    return 'You are a support copilot for Channel D, a TV signage app for dental practices.';
+    return 'You are an AI copilot for a Channel D support agent helping dental practices install a TV signage app.';
   }
 }
 
@@ -149,95 +152,55 @@ function getOrCreateSession(roomId) {
     .get(roomId);
   if (!row) {
     const info = db
-      .prepare('INSERT INTO sessions (roomId, caseDescription, createdAt) VALUES (?, ?, ?)')
-      .run(roomId, '', Date.now());
+      .prepare('INSERT INTO sessions (roomId, createdAt) VALUES (?, ?)')
+      .run(roomId, Date.now());
     row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(info.lastInsertRowid);
   }
   return row;
 }
 
-// Rebuild the full Anthropic conversation for a session from disk: case
-// description + every capture (image + note) + every prior AI reply. The latest
-// capture (aiReply still null) becomes the final user turn we want answered.
-function buildConversation(session) {
+// Rebuild the Anthropic conversation for a session from the stored transcript.
+function buildConversation(sessionId) {
   const rows = db
     .prepare('SELECT * FROM messages WHERE sessionId = ? ORDER BY id ASC')
-    .all(session.id);
+    .all(sessionId);
   const messages = [];
-  rows.forEach((m, idx) => {
+  rows.forEach((m) => {
+    if (m.role === 'assistant') {
+      messages.push({ role: 'assistant', content: m.text || '(no response)' });
+      return;
+    }
     const content = [];
-    try {
-      const b64 = fs.readFileSync(m.imagePath).toString('base64');
-      content.push({
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/jpeg', data: b64 },
-      });
-    } catch (_) {
-      /* image file missing — send the note alone rather than failing */
+    if (m.imagePath) {
+      try {
+        const b64 = fs.readFileSync(m.imagePath).toString('base64');
+        content.push({
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/jpeg', data: b64 },
+        });
+      } catch (_) {
+        /* image file missing — send text alone rather than failing */
+      }
     }
-    let text = '';
-    if (idx === 0) {
-      text += `Case description: ${session.caseDescription || '(none provided)'}\n\n`;
-    }
-    text += m.note ? `Agent note: ${m.note}` : 'Agent note: (none)';
-    content.push({ type: 'text', text });
+    // Always include a text block (the API requires non-empty content).
+    content.push({ type: 'text', text: m.text || '(screenshot attached)' });
     messages.push({ role: 'user', content });
-    if (m.aiReply) messages.push({ role: 'assistant', content: m.aiReply });
   });
   return messages;
 }
 
-app.post('/api/diagnose', async (req, res) => {
-  const { roomId, caseDescription, note, image, captureId } = req.body || {};
-  if (!roomId) return res.status(400).json({ error: 'Missing roomId' });
-
-  const session = getOrCreateSession(roomId);
-  // Case description is editable any time and sent with every request.
-  db.prepare('UPDATE sessions SET caseDescription = ? WHERE id = ?').run(
-    caseDescription || '',
-    session.id
-  );
-  session.caseDescription = caseDescription || '';
-
-  let messageRow;
-  if (captureId) {
-    // Retry of an existing capture — reuse its saved image, no re-capture.
-    messageRow = db
-      .prepare('SELECT * FROM messages WHERE id = ? AND sessionId = ?')
-      .get(captureId, session.id);
-    if (!messageRow) return res.status(404).json({ error: 'Capture not found for retry' });
-    if (typeof note === 'string') {
-      db.prepare('UPDATE messages SET note = ? WHERE id = ?').run(note, messageRow.id);
-      messageRow.note = note;
-    }
-  } else {
-    if (!image) return res.status(400).json({ error: 'Missing image' });
-    const base64 = String(image).replace(/^data:image\/\w+;base64,/, '');
-    const info = db
-      .prepare(
-        'INSERT INTO messages (sessionId, role, note, imagePath, aiReply, timestamp) VALUES (?, ?, ?, ?, NULL, ?)'
-      )
-      .run(session.id, 'capture', note || '', '', Date.now());
-    const id = info.lastInsertRowid;
-    const filepath = path.join(capturesDir, `capture-${id}.jpg`);
-    fs.writeFileSync(filepath, Buffer.from(base64, 'base64'));
-    db.prepare('UPDATE messages SET imagePath = ? WHERE id = ?').run(filepath, id);
-    messageRow = db.prepare('SELECT * FROM messages WHERE id = ?').get(id);
-  }
-
+// Generate an assistant reply for the current transcript, persist it, and
+// return it. Shared by the send and retry paths.
+async function generateReply(session, res) {
   if (!anthropic) {
-    return res.json({
-      captureId: messageRow.id,
-      error: 'AI is not configured. Set ANTHROPIC_API_KEY on the server.',
-    });
+    return res.json({ error: 'AI is not configured. Set ANTHROPIC_API_KEY on the server.' });
   }
-
   try {
     const response = await anthropic.messages.create({
       model: AI_MODEL,
       max_tokens: 1024,
       system: loadSystemPrompt(),
-      messages: buildConversation(session),
+      messages: buildConversation(session.id),
     });
     const reply =
       (response.content || [])
@@ -245,16 +208,59 @@ app.post('/api/diagnose', async (req, res) => {
         .map((b) => b.text)
         .join('\n')
         .trim() || '(no response)';
-    db.prepare('UPDATE messages SET aiReply = ? WHERE id = ?').run(reply, messageRow.id);
-    res.json({ captureId: messageRow.id, aiReply: reply });
+    db.prepare(
+      'INSERT INTO messages (sessionId, role, text, imagePath, timestamp) VALUES (?, ?, ?, NULL, ?)'
+    ).run(session.id, 'assistant', reply, Date.now());
+    res.json({ reply });
   } catch (err) {
-    // Leave aiReply null so the agent can retry the same capture.
-    console.error('[diagnose] AI call failed:', err.message);
-    res.json({ captureId: messageRow.id, error: `AI request failed: ${err.message}` });
+    // Nothing persisted for this failed turn — the agent can retry, which
+    // regenerates against the same trailing user turn.
+    console.error('[chat] AI call failed:', err.message);
+    res.json({ error: `AI request failed: ${err.message}` });
   }
+}
+
+app.post('/api/chat', async (req, res) => {
+  const { roomId, text, image, retry } = req.body || {};
+  if (!roomId) return res.status(400).json({ error: 'Missing roomId' });
+
+  const session = getOrCreateSession(roomId);
+
+  if (retry) {
+    // Regenerate for the trailing agent turn without adding a new message.
+    const last = db
+      .prepare('SELECT * FROM messages WHERE sessionId = ? ORDER BY id DESC LIMIT 1')
+      .get(session.id);
+    if (!last || last.role !== 'user') {
+      return res.status(400).json({ error: 'Nothing to retry' });
+    }
+    return generateReply(session, res);
+  }
+
+  const trimmed = typeof text === 'string' ? text.trim() : '';
+  if (!trimmed && !image) {
+    return res.status(400).json({ error: 'Message needs text or an attachment' });
+  }
+
+  // Persist the agent turn (+ optional screenshot).
+  const info = db
+    .prepare(
+      'INSERT INTO messages (sessionId, role, text, imagePath, timestamp) VALUES (?, ?, ?, ?, ?)'
+    )
+    .run(session.id, 'user', trimmed, null, Date.now());
+  const id = info.lastInsertRowid;
+
+  if (image) {
+    const base64 = String(image).replace(/^data:image\/\w+;base64,/, '');
+    const filepath = path.join(capturesDir, `capture-${id}.jpg`);
+    fs.writeFileSync(filepath, Buffer.from(base64, 'base64'));
+    db.prepare('UPDATE messages SET imagePath = ? WHERE id = ?').run(filepath, id);
+  }
+
+  return generateReply(session, res);
 });
 
-// Read-only case history.
+// Read-only chat history.
 app.get('/history', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'history.html'));
 });
@@ -262,11 +268,12 @@ app.get('/history', (req, res) => {
 app.get('/api/history', (req, res) => {
   const sessions = db
     .prepare(
-      `SELECT s.id, s.roomId, s.caseDescription, s.createdAt,
-              COUNT(m.id) AS messageCount
+      `SELECT s.id, s.roomId, s.createdAt,
+              (SELECT COUNT(*) FROM messages m WHERE m.sessionId = s.id AND m.role = 'user') AS messageCount,
+              (SELECT text FROM messages m
+                 WHERE m.sessionId = s.id AND m.role = 'user' AND m.text != ''
+                 ORDER BY m.id ASC LIMIT 1) AS preview
        FROM sessions s
-       LEFT JOIN messages m ON m.sessionId = s.id
-       GROUP BY s.id
        ORDER BY s.createdAt DESC`
     )
     .all();
@@ -281,8 +288,8 @@ app.get('/api/history/:id', (req, res) => {
     .all(session.id)
     .map((m) => ({
       id: m.id,
-      note: m.note,
-      aiReply: m.aiReply,
+      role: m.role,
+      text: m.text,
       timestamp: m.timestamp,
       imageUrl: m.imagePath ? '/captures/' + path.basename(m.imagePath) : null,
     }));
