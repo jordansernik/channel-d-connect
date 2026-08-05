@@ -15,6 +15,10 @@ services:
       # but diagnosis returns a "not configured" message.
       - key: ANTHROPIC_API_KEY
         sync: false
+      # TextBelt key for texting the join link (pay-as-you-go). Set in the
+      # dashboard. If unset, the app falls back to 1 free test SMS per day.
+      - key: TEXTBELT_API_KEY
+        sync: false
       # TURN relay credentials — set these in the Render dashboard (kept out of
       # the repo). Leave unset to run STUN-only.
       - key: TURN_URLS

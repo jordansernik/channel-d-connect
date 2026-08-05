@@ -203,6 +203,14 @@
     }
     .hint { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
 
+    .sms-row { display: flex; gap: 8px; margin-top: 12px; }
+    .sms-row input {
+      flex: 1; min-width: 0; font: inherit; font-size: 13px;
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px; padding: 11px 12px;
+    }
+    .sms-row button { white-space: nowrap; }
+
     .controls { display: flex; gap: 10px; }
     .controls button { flex: 1; }
     .toggle-muted { background: var(--red) !important; color: #fff !important; }
@@ -270,6 +278,10 @@
             <button class="btn-secondary" id="copyBtn">Copy</button>
           </div>
           <div class="hint">Send this link to the practice. They open it on their phone and share their camera. You'll see their feed here and can talk to them.</div>
+          <div class="sms-row">
+            <input id="phoneInput" type="tel" placeholder="Phone number, e.g. +1 555 123 4567" />
+            <button class="btn-secondary" id="smsBtn">Text link</button>
+          </div>
         </div>
       </div>
 
@@ -347,6 +359,8 @@
       linkArea: document.getElementById('linkArea'),
       linkInput: document.getElementById('linkInput'),
       copyBtn: document.getElementById('copyBtn'),
+      phoneInput: document.getElementById('phoneInput'),
+      smsBtn: document.getElementById('smsBtn'),
       controlsCard: document.getElementById('controlsCard'),
       muteBtn: document.getElementById('muteBtn'),
       dangerCard: document.getElementById('dangerCard'),
@@ -617,6 +631,29 @@
 
       if (socket.connected) doCreate();
       else socket.once('connect', doCreate);
+    });
+
+    els.smsBtn.addEventListener('click', async () => {
+      const phone = els.phoneInput.value.trim();
+      if (!phone) { toast('Enter a phone number first.'); return; }
+      if (!els.linkInput.value) { toast('Create a session first.'); return; }
+      els.smsBtn.disabled = true;
+      const original = els.smsBtn.textContent;
+      els.smsBtn.textContent = 'Sending…';
+      try {
+        const r = await fetch('/api/send-sms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone, link: els.linkInput.value }),
+        });
+        const data = await r.json();
+        if (data.ok) toast('Link texted to ' + phone);
+        else toast('Could not send: ' + (data.error || 'unknown error'));
+      } catch (e) {
+        toast('Send failed: ' + e.message);
+      }
+      els.smsBtn.disabled = false;
+      els.smsBtn.textContent = original;
     });
 
     els.copyBtn.addEventListener('click', async () => {

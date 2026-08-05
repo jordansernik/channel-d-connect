@@ -297,6 +297,36 @@ app.get('/api/history/:id', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Send the join link by SMS via TextBelt (pay-as-you-go, no monthly fee)
+// ---------------------------------------------------------------------------
+// Set TEXTBELT_API_KEY to your purchased key. Defaults to the shared "textbelt"
+// test key, which allows 1 free SMS per day (fine for a first test).
+app.post('/api/send-sms', async (req, res) => {
+  const { phone, link } = req.body || {};
+  if (!phone || !link) {
+    return res.status(400).json({ ok: false, error: 'Missing phone number or link' });
+  }
+  const key = process.env.TEXTBELT_API_KEY || 'textbelt';
+  const message = `Channel D video support — tap to join the call: ${link}`;
+  try {
+    const resp = await fetch('https://textbelt.com/text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ phone, message, key }).toString(),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      res.json({ ok: true, quotaRemaining: data.quotaRemaining });
+    } else {
+      res.json({ ok: false, error: data.error || 'SMS failed', quotaRemaining: data.quotaRemaining });
+    }
+  } catch (err) {
+    console.error('[sms] TextBelt request failed:', err.message);
+    res.json({ ok: false, error: 'SMS request failed: ' + err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Signaling
 // ---------------------------------------------------------------------------
 io.on('connection', (socket) => {
