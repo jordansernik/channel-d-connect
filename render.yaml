@@ -10,6 +10,11 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "20"
+      # Anthropic API key for the AI diagnosis assistant. Set in the Render
+      # dashboard (kept out of the repo). Without it, screen capture still works
+      # but diagnosis returns a "not configured" message.
+      - key: ANTHROPIC_API_KEY
+        sync: false
       # TURN relay credentials — set these in the Render dashboard (kept out of
       # the repo). Leave unset to run STUN-only.
       - key: TURN_URLS

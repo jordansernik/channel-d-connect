@@ -95,9 +95,46 @@
     body.is-connected .placeholder { display: none; }
 
     .sidebar {
-      width: 340px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px;
+      width: 420px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px;
+      min-height: 0;
     }
     @media (max-width: 900px) { .sidebar { width: 100%; } }
+
+    /* AI diagnosis panel */
+    .ai-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .ai-label { font-size: 12px; color: var(--muted); font-weight: 600; display: block; margin-bottom: 6px; }
+    .ai-textarea {
+      width: 100%; resize: vertical; min-height: 50px; max-height: 130px;
+      background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 13px; margin-bottom: 12px;
+    }
+    .ai-messages {
+      flex: 1; min-height: 140px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 12px; padding: 2px;
+    }
+    .ai-empty { color: var(--muted); font-size: 13px; text-align: center; margin: auto; padding: 24px 12px; line-height: 1.5; }
+    .ai-msg { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: var(--panel-2); }
+    .ai-thumb { width: 100%; border-radius: 8px; display: block; margin-bottom: 8px; background: #000; }
+    .ai-note-line { font-size: 12px; color: var(--muted); font-style: italic; margin-bottom: 8px; }
+    .ai-reply { font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+    .ai-reply.error { color: var(--red); }
+    .ai-loading { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+    .ai-spinner {
+      width: 14px; height: 14px; border: 2px solid var(--border);
+      border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .ai-retry {
+      display: block; margin-top: 8px; background: var(--panel-2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; padding: 6px 12px; font: inherit; font-weight: 600; font-size: 12px; cursor: pointer;
+    }
+    .ai-compose { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .ai-note {
+      width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 13px;
+    }
+    .ai-history-link { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--accent); text-decoration: none; }
+    .ai-history-link:hover { text-decoration: underline; }
 
     .card {
       background: var(--panel); border: 1px solid var(--border);
@@ -195,10 +232,25 @@
       <div class="card" id="dangerCard" style="display:none;">
         <button class="btn-danger" id="endBtn" style="width:100%;">End Session</button>
       </div>
+
+      <div class="card ai-card">
+        <h2>AI Diagnosis Assistant</h2>
+        <label class="ai-label" for="caseDesc">Case description</label>
+        <textarea id="caseDesc" class="ai-textarea" placeholder="e.g. Practice needs to uninstall and reinstall the app"></textarea>
+        <div class="ai-messages" id="aiMessages">
+          <div class="ai-empty">Capture the guest's TV screen to get AI help identifying the device and the next steps to read aloud.</div>
+        </div>
+        <div class="ai-compose">
+          <input id="captureNote" class="ai-note" placeholder="Optional note for this capture (e.g. they just pressed Settings)" />
+          <button class="btn-primary" id="captureBtn">📷 Capture Screen</button>
+        </div>
+        <a class="ai-history-link" href="/history" target="_blank" rel="noopener">View case history →</a>
+      </div>
     </aside>
   </main>
 
   <div class="toast" id="toast"></div>
+  <canvas id="captureCanvas" style="display:none;"></canvas>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
@@ -240,6 +292,11 @@
       remoteVideo: document.getElementById('remoteVideo'),
       rotateBtn: document.getElementById('rotateBtn'),
       toast: document.getElementById('toast'),
+      caseDesc: document.getElementById('caseDesc'),
+      aiMessages: document.getElementById('aiMessages'),
+      captureNote: document.getElementById('captureNote'),
+      captureBtn: document.getElementById('captureBtn'),
+      captureCanvas: document.getElementById('captureCanvas'),
     };
 
     let socket = null;
@@ -493,6 +550,102 @@
       if (localStream) { localStream.getTracks().forEach((t) => t.stop()); localStream = null; }
       if (socket) socket.disconnect();
       location.href = '/host';
+    });
+
+    // --- AI diagnosis assistant ---
+    function currentRoomId() {
+      return roomId || (location.hash.length > 1 ? location.hash.slice(1) : null);
+    }
+
+    function scrollMessages() {
+      els.aiMessages.scrollTop = els.aiMessages.scrollHeight;
+    }
+
+    // Grab the current guest frame, downscale to <=1280px wide, JPEG ~0.8.
+    function captureFrame() {
+      const v = els.remoteVideo;
+      if (!v || !v.srcObject || !v.videoWidth) return null;
+      const scale = Math.min(1, 1280 / v.videoWidth);
+      const w = Math.round(v.videoWidth * scale);
+      const h = Math.round(v.videoHeight * scale);
+      const c = els.captureCanvas;
+      c.width = w;
+      c.height = h;
+      c.getContext('2d').drawImage(v, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.8);
+    }
+
+    function retryBody(ref) {
+      const body = { roomId: currentRoomId(), caseDescription: els.caseDesc.value, note: ref.note };
+      if (ref.captureId) body.captureId = ref.captureId;
+      else body.image = ref.image;
+      return body;
+    }
+
+    function showError(replyEl, msg, ref) {
+      replyEl.className = 'ai-reply error';
+      replyEl.textContent = msg;
+      const btn = document.createElement('button');
+      btn.className = 'ai-retry';
+      btn.textContent = 'Retry';
+      btn.addEventListener('click', () => runDiagnose(retryBody(ref), replyEl, ref));
+      replyEl.appendChild(btn);
+    }
+
+    async function runDiagnose(body, replyEl, ref) {
+      replyEl.className = 'ai-loading';
+      replyEl.innerHTML = '<span class="ai-spinner"></span> Analyzing…';
+      scrollMessages();
+      try {
+        const r = await fetch('/api/diagnose', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await r.json();
+        if (data.captureId) ref.captureId = data.captureId;
+        if (data.error) {
+          showError(replyEl, data.error, ref);
+        } else {
+          replyEl.className = 'ai-reply';
+          replyEl.textContent = data.aiReply;
+        }
+      } catch (e) {
+        showError(replyEl, 'Network error: ' + e.message, ref);
+      }
+      scrollMessages();
+    }
+
+    els.captureBtn.addEventListener('click', () => {
+      const rid = currentRoomId();
+      if (!rid) { toast('Create a session first.'); return; }
+      const dataUrl = captureFrame();
+      if (!dataUrl) { toast('No guest video to capture yet.'); return; }
+
+      const note = els.captureNote.value.trim();
+      els.captureNote.value = '';
+
+      const empty = els.aiMessages.querySelector('.ai-empty');
+      if (empty) empty.remove();
+
+      const msg = document.createElement('div');
+      msg.className = 'ai-msg';
+      const img = document.createElement('img');
+      img.className = 'ai-thumb';
+      img.src = dataUrl;
+      msg.appendChild(img);
+      if (note) {
+        const n = document.createElement('div');
+        n.className = 'ai-note-line';
+        n.textContent = note;
+        msg.appendChild(n);
+      }
+      const reply = document.createElement('div');
+      msg.appendChild(reply);
+      els.aiMessages.appendChild(msg);
+
+      const ref = { captureId: null, note, image: dataUrl };
+      runDiagnose({ roomId: rid, caseDescription: els.caseDesc.value, note, image: dataUrl }, reply, ref);
     });
 
     // Restore room id from hash if the host reloaded.

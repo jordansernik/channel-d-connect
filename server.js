@@ -3,10 +3,13 @@
 require('dotenv').config();
 
 const path = require('path');
+const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
 const express = require('express');
 const { Server } = require('socket.io');
+const Database = require('better-sqlite3');
+const Anthropic = require('@anthropic-ai/sdk');
 
 const PORT = process.env.PORT || 3000;
 
@@ -40,6 +43,9 @@ function generateRoomId(length = 6) {
 // Static files + routes
 // ---------------------------------------------------------------------------
 app.use(express.static(path.join(__dirname, 'public')));
+// Parse JSON bodies. The diagnose route carries base64 JPEG frames, so raise
+// the default limit well above a single downscaled capture.
+app.use(express.json({ limit: '15mb' }));
 
 app.get('/', (req, res) => {
   res.redirect('/host');
@@ -90,6 +96,197 @@ app.get('/api/ice-servers', (req, res) => {
   // Don't let stale ICE config get cached by the browser.
   res.set('Cache-Control', 'no-store');
   res.json({ iceServers: buildIceServers() });
+});
+
+// ---------------------------------------------------------------------------
+// AI diagnosis assistant (host view only)
+// ---------------------------------------------------------------------------
+// Captured JPEGs live on disk under /captures; the DB stores their paths plus
+// the running conversation so nothing is lost on a server restart.
+const capturesDir = path.join(__dirname, 'captures');
+fs.mkdirSync(capturesDir, { recursive: true });
+
+const db = new Database(path.join(__dirname, 'diagnosis.db'));
+db.pragma('journal_mode = WAL');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    roomId TEXT,
+    caseDescription TEXT,
+    createdAt INTEGER
+  );
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sessionId INTEGER,
+    role TEXT,
+    note TEXT,
+    imagePath TEXT,
+    aiReply TEXT,
+    timestamp INTEGER
+  );
+`);
+
+// Serve captured frames read-only for the history page thumbnails.
+app.use('/captures', express.static(capturesDir));
+
+// The Anthropic key never reaches the browser. If it's unset the panel still
+// works for capturing; diagnose just returns a "not configured" message.
+const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null;
+const AI_MODEL = 'claude-sonnet-4-6';
+
+// Re-read the prompt on every call so the file can be edited without a restart.
+function loadSystemPrompt() {
+  try {
+    return fs.readFileSync(path.join(__dirname, 'systemPrompt.txt'), 'utf8');
+  } catch (_) {
+    return 'You are a support copilot for Channel D, a TV signage app for dental practices.';
+  }
+}
+
+function getOrCreateSession(roomId) {
+  let row = db
+    .prepare('SELECT * FROM sessions WHERE roomId = ? ORDER BY id DESC LIMIT 1')
+    .get(roomId);
+  if (!row) {
+    const info = db
+      .prepare('INSERT INTO sessions (roomId, caseDescription, createdAt) VALUES (?, ?, ?)')
+      .run(roomId, '', Date.now());
+    row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(info.lastInsertRowid);
+  }
+  return row;
+}
+
+// Rebuild the full Anthropic conversation for a session from disk: case
+// description + every capture (image + note) + every prior AI reply. The latest
+// capture (aiReply still null) becomes the final user turn we want answered.
+function buildConversation(session) {
+  const rows = db
+    .prepare('SELECT * FROM messages WHERE sessionId = ? ORDER BY id ASC')
+    .all(session.id);
+  const messages = [];
+  rows.forEach((m, idx) => {
+    const content = [];
+    try {
+      const b64 = fs.readFileSync(m.imagePath).toString('base64');
+      content.push({
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/jpeg', data: b64 },
+      });
+    } catch (_) {
+      /* image file missing — send the note alone rather than failing */
+    }
+    let text = '';
+    if (idx === 0) {
+      text += `Case description: ${session.caseDescription || '(none provided)'}\n\n`;
+    }
+    text += m.note ? `Agent note: ${m.note}` : 'Agent note: (none)';
+    content.push({ type: 'text', text });
+    messages.push({ role: 'user', content });
+    if (m.aiReply) messages.push({ role: 'assistant', content: m.aiReply });
+  });
+  return messages;
+}
+
+app.post('/api/diagnose', async (req, res) => {
+  const { roomId, caseDescription, note, image, captureId } = req.body || {};
+  if (!roomId) return res.status(400).json({ error: 'Missing roomId' });
+
+  const session = getOrCreateSession(roomId);
+  // Case description is editable any time and sent with every request.
+  db.prepare('UPDATE sessions SET caseDescription = ? WHERE id = ?').run(
+    caseDescription || '',
+    session.id
+  );
+  session.caseDescription = caseDescription || '';
+
+  let messageRow;
+  if (captureId) {
+    // Retry of an existing capture — reuse its saved image, no re-capture.
+    messageRow = db
+      .prepare('SELECT * FROM messages WHERE id = ? AND sessionId = ?')
+      .get(captureId, session.id);
+    if (!messageRow) return res.status(404).json({ error: 'Capture not found for retry' });
+    if (typeof note === 'string') {
+      db.prepare('UPDATE messages SET note = ? WHERE id = ?').run(note, messageRow.id);
+      messageRow.note = note;
+    }
+  } else {
+    if (!image) return res.status(400).json({ error: 'Missing image' });
+    const base64 = String(image).replace(/^data:image\/\w+;base64,/, '');
+    const info = db
+      .prepare(
+        'INSERT INTO messages (sessionId, role, note, imagePath, aiReply, timestamp) VALUES (?, ?, ?, ?, NULL, ?)'
+      )
+      .run(session.id, 'capture', note || '', '', Date.now());
+    const id = info.lastInsertRowid;
+    const filepath = path.join(capturesDir, `capture-${id}.jpg`);
+    fs.writeFileSync(filepath, Buffer.from(base64, 'base64'));
+    db.prepare('UPDATE messages SET imagePath = ? WHERE id = ?').run(filepath, id);
+    messageRow = db.prepare('SELECT * FROM messages WHERE id = ?').get(id);
+  }
+
+  if (!anthropic) {
+    return res.json({
+      captureId: messageRow.id,
+      error: 'AI is not configured. Set ANTHROPIC_API_KEY on the server.',
+    });
+  }
+
+  try {
+    const response = await anthropic.messages.create({
+      model: AI_MODEL,
+      max_tokens: 1024,
+      system: loadSystemPrompt(),
+      messages: buildConversation(session),
+    });
+    const reply =
+      (response.content || [])
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n')
+        .trim() || '(no response)';
+    db.prepare('UPDATE messages SET aiReply = ? WHERE id = ?').run(reply, messageRow.id);
+    res.json({ captureId: messageRow.id, aiReply: reply });
+  } catch (err) {
+    // Leave aiReply null so the agent can retry the same capture.
+    console.error('[diagnose] AI call failed:', err.message);
+    res.json({ captureId: messageRow.id, error: `AI request failed: ${err.message}` });
+  }
+});
+
+// Read-only case history.
+app.get('/history', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'history.html'));
+});
+
+app.get('/api/history', (req, res) => {
+  const sessions = db
+    .prepare(
+      `SELECT s.id, s.roomId, s.caseDescription, s.createdAt,
+              COUNT(m.id) AS messageCount
+       FROM sessions s
+       LEFT JOIN messages m ON m.sessionId = s.id
+       GROUP BY s.id
+       ORDER BY s.createdAt DESC`
+    )
+    .all();
+  res.json({ sessions });
+});
+
+app.get('/api/history/:id', (req, res) => {
+  const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Not found' });
+  const messages = db
+    .prepare('SELECT * FROM messages WHERE sessionId = ? ORDER BY id ASC')
+    .all(session.id)
+    .map((m) => ({
+      id: m.id,
+      note: m.note,
+      aiReply: m.aiReply,
+      timestamp: m.timestamp,
+      imageUrl: m.imagePath ? '/captures/' + path.basename(m.imagePath) : null,
+    }));
+  res.json({ session, messages });
 });
 
 // ---------------------------------------------------------------------------
