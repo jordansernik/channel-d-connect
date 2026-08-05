@@ -19,8 +19,14 @@ services:
       # dashboard. If unset, the app falls back to 1 free test SMS per day.
       - key: TEXTBELT_API_KEY
         sync: false
-      # TURN relay credentials — set these in the Render dashboard (kept out of
-      # the repo). Leave unset to run STUN-only.
+      # TURN relay — needed so calls connect on cellular / restrictive networks.
+      # Preferred: Metered (metered.ca) API key + your app domain.
+      - key: METERED_DOMAIN
+        sync: false
+      - key: METERED_API_KEY
+        sync: false
+      # Alternative: static TURN credentials from any provider (leave Metered
+      # vars unset to use these). All unset = STUN only.
       - key: TURN_URLS
         sync: false
       - key: TURN_USERNAME

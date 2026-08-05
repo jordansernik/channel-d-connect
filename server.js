@@ -74,9 +74,33 @@ app.get('/api/room/:roomId', (req, res) => {
 // or self-hosted coturn), a TURN relay is added as a fallback for restrictive
 // networks where direct peer-to-peer fails. Kept server-side so credentials
 // aren't hard-coded in the client and can be rotated without a redeploy.
-function buildIceServers() {
+async function buildIceServers() {
   const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
 
+  // Preferred: Metered — fetch fresh TURN credentials with an API key.
+  if (process.env.METERED_DOMAIN && process.env.METERED_API_KEY) {
+    try {
+      const url = `https://${process.env.METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${encodeURIComponent(
+        process.env.METERED_API_KEY
+      )}`;
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const list = await resp.json();
+        if (Array.isArray(list)) {
+          for (const s of list) {
+            if (s && s.urls) iceServers.push(s);
+          }
+          return iceServers;
+        }
+      } else {
+        console.error('[ice] Metered credentials fetch failed:', resp.status);
+      }
+    } catch (err) {
+      console.error('[ice] Metered credentials error:', err.message);
+    }
+  }
+
+  // Fallback: static TURN credentials from env vars.
   if (process.env.TURN_URLS) {
     const urls = process.env.TURN_URLS.split(',')
       .map((s) => s.trim())
@@ -92,10 +116,10 @@ function buildIceServers() {
   return iceServers;
 }
 
-app.get('/api/ice-servers', (req, res) => {
+app.get('/api/ice-servers', async (req, res) => {
   // Don't let stale ICE config get cached by the browser.
   res.set('Cache-Control', 'no-store');
-  res.json({ iceServers: buildIceServers() });
+  res.json({ iceServers: await buildIceServers() });
 });
 
 // ---------------------------------------------------------------------------
