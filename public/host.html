@@ -216,6 +216,10 @@
     .toggle-muted { background: var(--red) !important; color: #fff !important; }
     .mic-meter { height: 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; margin: 12px 0 6px; }
     .mic-meter-fill { height: 100%; width: 0%; background: var(--green); transition: width .06s linear; }
+    .mic-select {
+      width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 13px; margin-bottom: 10px;
+    }
 
     .toast {
       position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
@@ -287,11 +291,12 @@
 
       <div class="card" id="controlsCard" style="display:none;">
         <h2>Your Microphone</h2>
+        <select id="micSelect" class="mic-select" title="Choose which microphone to use"></select>
         <div class="controls">
           <button class="btn-secondary" id="muteBtn">Mute Mic</button>
         </div>
         <div class="mic-meter" title="Live microphone level"><div class="mic-meter-fill" id="micMeterFill"></div></div>
-        <div class="hint" id="micHint">Speak — this bar should move when your mic hears you. If it stays flat, your mic isn't being picked up (wrong device or muted).</div>
+        <div class="hint" id="micHint">Pick your mic above, then speak — the bar should move. If it stays flat, try a different device. A headset (or AirPods) gives the clearest audio.</div>
       </div>
 
       <div class="card" id="dangerCard" style="display:none;">
@@ -367,6 +372,7 @@
       endBtn: document.getElementById('endBtn'),
       remoteVideo: document.getElementById('remoteVideo'),
       micMeterFill: document.getElementById('micMeterFill'),
+      micSelect: document.getElementById('micSelect'),
       rotateBtn: document.getElementById('rotateBtn'),
       toast: document.getElementById('toast'),
       aiMessages: document.getElementById('aiMessages'),
@@ -393,6 +399,7 @@
     let roomId = null;
     let makingOffer = false;
     let rotation = 0; // degrees; agent-controlled video rotation
+    let selectedMicId = localStorage.getItem('cdc_mic_id') || null;
 
     // Rotate the incoming feed. At 90°/270° we swap the element's width/height
     // so the rotated video still fits the stage instead of overflowing.
@@ -428,11 +435,81 @@
     }
 
     // --- Media: host is audio-only ---
+    function audioConstraints() {
+      return { video: false, audio: selectedMicId ? { deviceId: { exact: selectedMicId } } : true };
+    }
+
     async function ensureLocalAudio() {
       if (localStream) return localStream;
-      localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia(audioConstraints());
+      } catch (err) {
+        // Preferred device gone (e.g. AirPods unplugged) — fall back to default.
+        if (selectedMicId) {
+          selectedMicId = null;
+          localStorage.removeItem('cdc_mic_id');
+          localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+        } else {
+          throw err;
+        }
+      }
       startMicMeter(localStream);
+      populateMicList();
       return localStream;
+    }
+
+    function currentMicId() {
+      const track = localStream && localStream.getAudioTracks()[0];
+      const settings = track && track.getSettings ? track.getSettings() : null;
+      return (settings && settings.deviceId) || selectedMicId || '';
+    }
+
+    // List the available microphones so the agent can choose one.
+    async function populateMicList() {
+      if (!els.micSelect) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter((d) => d.kind === 'audioinput');
+        const current = currentMicId();
+        els.micSelect.innerHTML = '';
+        mics.forEach((d, i) => {
+          const opt = document.createElement('option');
+          opt.value = d.deviceId;
+          opt.textContent = d.label || 'Microphone ' + (i + 1);
+          els.micSelect.appendChild(opt);
+        });
+        if (current) els.micSelect.value = current;
+      } catch (_) { /* ignore */ }
+    }
+
+    // Switch to a specific mic — live if a call is already connected.
+    async function switchMic(deviceId) {
+      if (!deviceId) return;
+      selectedMicId = deviceId;
+      localStorage.setItem('cdc_mic_id', deviceId);
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: false,
+          audio: { deviceId: { exact: deviceId } },
+        });
+        const newTrack = newStream.getAudioTracks()[0];
+        newTrack.enabled = !micMuted(); // keep current mute state
+        if (pc) {
+          const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'audio');
+          if (sender) await sender.replaceTrack(newTrack);
+        }
+        if (localStream) {
+          const old = localStream.getAudioTracks()[0];
+          if (old) { localStream.removeTrack(old); old.stop(); }
+          localStream.addTrack(newTrack);
+        } else {
+          localStream = newStream;
+        }
+        startMicMeter(localStream);
+        populateMicList();
+      } catch (err) {
+        toast('Could not switch microphone: ' + err.message);
+      }
     }
 
     // Live input-level meter so the agent can see if their mic is being heard.
@@ -690,6 +767,10 @@
       if (socket) socket.emit('peer-state', { muted });
     }
     els.muteBtn.addEventListener('click', () => setMicMuted(!micMuted()));
+    els.micSelect.addEventListener('change', () => switchMic(els.micSelect.value));
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', populateMicList);
+    }
 
     els.endBtn.addEventListener('click', () => {
       closePeerConnection();
